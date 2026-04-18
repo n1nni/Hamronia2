@@ -168,7 +168,7 @@
           <text font-weight="bold">i</text>
         </lyric>
       </note>
-      <note default-x="154">
+      <note default-x="70">
         <pitch>
           <step>C</step>
           <octave>4</octave>

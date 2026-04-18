@@ -36,60 +36,82 @@
   <!-- Top bar -->
   <header>
     <span class="logo">HARMONIA</span>
-
-    <div class="threshold-group">
-      <label>Confidence threshold</label>
-      <input type="range" id="threshold-slider" min="0" max="100" value="75">
-      <span id="threshold-val">75</span>
-      <span class="threshold-legend">
-        <span class="dot-blue"></span>≥ threshold
-        <span class="dot-red"></span>&lt; threshold
-      </span>
-    </div>
-
-    <div class="header-right">
-      <button class="hbtn" id="zoom-out">−</button>
-      <span id="zoom-label">100%</span>
-      <button class="hbtn" id="zoom-in">+</button>
-      <button class="hbtn" id="reset-btn">Reset</button>
-      <button class="hbtn primary" id="download-btn">↓ Download MusicXML</button>
-    </div>
+    <div style="flex:1"></div>
+    <button class="hbtn primary" id="download-btn">↓ Download MusicXML</button>
   </header>
 
-  <!-- Two-panel body -->
-  <div class="panels">
+  <!-- Body: control panel (left) + stacked image/score (right) -->
+  <div class="body-split">
 
-    <!-- LEFT: original image + dot overlay -->
-    <div class="panel" id="image-panel">
-      <div class="panel-title">Original Image
-        <span class="panel-hint">click a dot to edit that note</span>
-      </div>
-      <div class="image-wrap" id="image-wrap">
-        <!-- img-container keeps dot-layer clipped exactly over the image -->
-        <div id="img-container">
-          <img id="score-img" alt="Uploaded score">
-          <div id="dot-layer"></div>
+    <!-- LEFT: control panel -->
+    <aside class="control-panel">
+
+      <div class="cp-section">
+        <div class="cp-title">View</div>
+        <div class="cp-row">
+          <button class="hbtn" id="zoom-out">−</button>
+          <span id="zoom-label">100%</span>
+          <button class="hbtn" id="zoom-in">+</button>
         </div>
       </div>
-    </div>
 
-    <!-- RIGHT: regenerated OSMD score -->
-    <div class="panel" id="score-panel">
-      <div class="panel-title">Regenerated Score</div>
-      <div class="score-scroll" id="score-scroll">
-        <div id="osmd-container"></div>
+      <div class="cp-section">
+        <div class="cp-title">Score</div>
+        <div class="cp-row">
+          <button class="hbtn" id="reset-btn">Reset Edits</button>
+        </div>
+        <div class="cp-row">
+          <button class="hbtn" id="new-image-btn">Load New Image</button>
+        </div>
       </div>
+
+      <div class="cp-section threshold-group hidden">
+        <div class="cp-title">Confidence Threshold</div>
+        <div class="cp-row">
+          <input type="range" id="threshold-slider" min="0" max="100" value="75">
+          <span id="threshold-val">75</span>
+        </div>
+        <span class="threshold-legend">
+          <span class="dot-blue"></span>≥ threshold
+          <span class="dot-red"></span>&lt; threshold
+        </span>
+      </div>
+
+      <!-- Note editor (inline in control panel) -->
+      <div id="note-editor" class="note-editor hidden">
+        <div class="editor-header">
+          <span id="editor-title">Note Editor</span>
+          <button id="editor-close" onclick="closeEditor()">✕</button>
+        </div>
+        <div id="editor-fields"></div>
+      </div>
+
+    </aside>
+
+    <!-- RIGHT: image on top, regenerated score below -->
+    <div class="right-stack">
+
+      <div class="panel" id="image-panel">
+        <div class="panel-title">Original Image
+          <span class="panel-hint">click a dot to edit that note</span>
+        </div>
+        <div class="image-wrap" id="image-wrap">
+          <div id="img-container">
+            <img id="score-img" alt="Uploaded score">
+            <div id="dot-layer"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="score-panel">
+        <div class="panel-title">Regenerated Score</div>
+        <div class="score-scroll" id="score-scroll">
+          <div id="osmd-container"></div>
+        </div>
+      </div>
+
     </div>
 
-  </div>
-
-  <!-- Bottom: note editor (hidden until note selected) -->
-  <div id="note-editor" class="note-editor hidden">
-    <div class="editor-header">
-      <span id="editor-title">Note Editor</span>
-      <button id="editor-close" onclick="closeEditor()">✕</button>
-    </div>
-    <div id="editor-fields"></div>
   </div>
 
 </div>

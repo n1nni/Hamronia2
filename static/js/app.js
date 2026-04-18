@@ -1,15 +1,11 @@
 /* ═══════════════════════════════════════════════════
    Harmonia – Score Editor
-   - Image upload with confidence-dot overlay
+   - Image upload + OpenCV staff-line anchor detection
    - OSMD multi-system rendering (respects new-system)
-   - Threshold-based dot colouring (blue/red)
-   - Note editor (edits reflected in regenerated score)
-   - Download saves to project /exports/ folder too
+   - Note dots projected from MusicXML onto the original
+     image via per-system affine (staff-line anchors)
+   - Note editor edits the MusicXML directly
 ═══════════════════════════════════════════════════ */
-
-// ── MusicXML page dimensions (tenths from the file) ──
-const XML_PAGE_W = 1365;   // tenths  →  px at OSMD zoom=1
-const XML_PAGE_H = 1922;
 
 // ── State ─────────────────────────────────────────────
 let osmd         = null;
@@ -17,12 +13,16 @@ let currentXML   = '';
 let originalXML  = '';
 let xmlDoc       = null;
 let xmlNoteIndex = {};      // "partIdx-measureNum-noteIdx" → <note> DOM
-let allNotes     = [];      // [{absX, absY, partIdx, measureNum, noteIdx, isRest}, …]
-let confidence   = [];      // parallel array, random 0-100 per note
+let allNotes     = [];      // [{absX, absY, partIdx, measureNum, noteIdx, sysIdx, staffIdx, isRest}, …]
 let currentZoom  = 1.0;
-let threshold    = 75;
 let selectedDot  = null;    // currently selected .ndot element
 let selectedNoteIdx = -1;   // index into allNotes
+
+// ── Alignment anchors ─────────────────────────────────
+let imgSystems  = [];       // backend: systems[].staves[].{top_y, bot_y, left_x, right_x}
+let osmdSystems = [];       // OSMD:    systems[].staves[].{topY,  botY,  leftX,  rightX}
+let imgNaturalW = 0;
+let imgNaturalH = 0;
 
 // ══════════════════════════════════════════════════════
 //  UPLOAD SCREEN
@@ -53,12 +53,35 @@ async function uploadImage(file) {
   document.getElementById('upload-screen').classList.add('hidden');
   document.getElementById('main-screen').classList.remove('hidden');
 
+  toast('Detecting staff lines…');
+  const detRes = await fetch('/api/detect_staves', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ filename: data.filename }),
+  });
+  const det = await detRes.json();
+  if (det.error) { toast('Staff detection failed: ' + det.error); return; }
+  imgSystems  = det.systems       || [];
+  imgNaturalW = det.image_width   || 0;
+  imgNaturalH = det.image_height  || 0;
+
   // Display image
   const img = document.getElementById('score-img');
   img.src = data.url;
   img.onload = () => placeDots();
 
   await initScore();
+}
+
+// Reset UI → upload screen (so user can load a different image)
+function showUploadScreen() {
+  document.getElementById('main-screen').classList.add('hidden');
+  document.getElementById('upload-screen').classList.remove('hidden');
+  document.getElementById('file-input').value = '';
+  imgSystems = []; osmdSystems = []; allNotes = [];
+  const layer = document.getElementById('dot-layer');
+  if (layer) layer.innerHTML = '';
+  closeEditor();
 }
 
 // ══════════════════════════════════════════════════════
@@ -80,7 +103,24 @@ async function initScore() {
     newSystemFromXML: true,         // respect <print new-system="yes">
     newPageFromXML:   false,
     pageBackgroundColor: '#eeede8',
+    renderSingleHorizontalStaffline: false,
   });
+
+  // Do not render time signature — source has senza-misura but OSMD falls back to 4/4
+  osmd.EngravingRules.RenderTimeSignatures = false;
+
+  // Both systems get stretched to same width → uniform look
+  osmd.EngravingRules.StretchLastSystemLine = true;
+
+  // ── Tight vertical spacing: shrink distances between staves & systems ──
+  osmd.EngravingRules.StaffDistance                 = 0.5;   // between staves within an instrument
+  osmd.EngravingRules.BetweenStaffDistance          = 0.5;   // between staves in the same system
+  osmd.EngravingRules.MinimumStaffLineDistance      = 0.5;
+  osmd.EngravingRules.MinSkyBottomDistBetweenStaves = 0.0;
+  osmd.EngravingRules.MinSkyBottomDistBetweenSystems = 0.0;
+  osmd.EngravingRules.MinimumDistanceBetweenSystems = 0.5;
+  osmd.EngravingRules.SystemDistance                = 1.0;   // between the 2 systems
+  osmd.EngravingRules.InstrumentLabelTextHeight     = 1.0;
 
   await renderScore(currentXML);
 }
@@ -88,12 +128,60 @@ async function initScore() {
 async function renderScore(xmlStr) {
   toast('Rendering…');
   await osmd.load(xmlStr);
+  // Tune vertical spacing to mirror the original photo's proportions before render.
+  applyPhotoDistancesToOsmd();
   osmd.zoom = currentZoom;
   await osmd.render();
   buildNoteRegistry();
-  generateConfidence();
   placeDots();           // re-place whenever score re-renders
   toast('');
+}
+
+/* Match OSMD's staff / system gaps to the proportions measured from the photo.
+   OSMD works in units where 4 units ≈ one staff height (5 lines).  We express
+   the photo's inter-staff and inter-system gaps as multiples of staff-height
+   and feed them into EngravingRules. */
+function applyPhotoDistancesToOsmd() {
+  if (!osmd || !imgSystems.length) return;
+
+  const staffHeights   = [];
+  const interStaffGaps = [];
+  const interSysGaps   = [];
+
+  imgSystems.forEach(sys => {
+    sys.staves.forEach(st => staffHeights.push(st.bot_y - st.top_y));
+    for (let i = 0; i < sys.staves.length - 1; i++) {
+      interStaffGaps.push(sys.staves[i + 1].top_y - sys.staves[i].bot_y);
+    }
+  });
+  for (let i = 0; i < imgSystems.length - 1; i++) {
+    const prev = imgSystems[i].staves.at(-1);
+    const next = imgSystems[i + 1].staves[0];
+    interSysGaps.push(next.top_y - prev.bot_y);
+  }
+
+  const med = a => { if (!a.length) return 0;
+    const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+
+  const staffH = med(staffHeights);
+  if (staffH < 1) return;
+
+  const UNITS_PER_STAFF = 4;
+  const betweenStaff = interStaffGaps.length
+    ? (med(interStaffGaps) / staffH) * UNITS_PER_STAFF
+    : 4;
+  const systemDist = interSysGaps.length
+    ? (med(interSysGaps) / staffH) * UNITS_PER_STAFF
+    : 8;
+
+  const er = osmd.EngravingRules;
+  er.StaffDistance                   = betweenStaff;
+  er.BetweenStaffDistance            = betweenStaff;
+  er.MinimumStaffLineDistance        = betweenStaff;
+  er.MinSkyBottomDistBetweenStaves   = betweenStaff * 0.1;
+  er.SystemDistance                  = systemDist;
+  er.MinimumDistanceBetweenSystems   = systemDist * 0.7;
+  er.MinSkyBottomDistBetweenSystems  = 0;
 }
 
 // ══════════════════════════════════════════════════════
@@ -118,33 +206,51 @@ function getXMLNote(pi, mn, ni) {
 }
 
 // ══════════════════════════════════════════════════════
-//  NOTE REGISTRY (OSMD graphic positions)
+//  NOTE REGISTRY + OSMD SYSTEM/STAFF ANCHORS
 // ══════════════════════════════════════════════════════
 function buildNoteRegistry() {
-  allNotes = [];
-  const sheet = osmd.GraphicSheet;
-  if (!sheet?.MeasureList) return;
+  allNotes    = [];
+  osmdSystems = [];
+  const page  = osmd?.GraphicSheet?.MusicPages?.[0];
+  if (!page?.MusicSystems) return;
 
-  // MeasureList[measureIdx][staffIdx]
-  sheet.MeasureList.forEach((staves) => {
-    staves.forEach((measure, staffIdx) => {
-      if (!measure) return;
-      const mn = measure.parentSourceMeasure?.measureNumber ?? 0;
-      let ni = 0;
-      (measure.staffEntries || []).forEach(se => {
-        (se.graphicalVoiceEntries || []).forEach(gve => {
-          (gve.notes || []).forEach(gn => {
-            const pos = gn.PositionAndShape?.AbsolutePosition;
-            if (!pos) { ni++; return; }
-            allNotes.push({
-              absX:    pos.x,   // OSMD units (1 unit = 10px at zoom=1)
-              absY:    pos.y,
-              partIdx: staffIdx,
-              measureNum: mn,
-              noteIdx: ni,
-              isRest:  !!gn.sourceNote?.isRest,
+  page.MusicSystems.forEach((sys, sysIdx) => {
+    // Per-staff bounding boxes for this system (OSMD units).
+    const staves = (sys.StaffLines || []).map(sl => {
+      const p  = sl.PositionAndShape.AbsolutePosition;
+      const sz = sl.PositionAndShape.Size;
+      return {
+        leftX:  p.x,
+        topY:   p.y,
+        rightX: p.x + sz.width,
+        botY:   p.y + sz.height,
+      };
+    });
+    osmdSystems.push({ staves });
+
+    // Walk measures *within this system* so we can tag every note with sysIdx.
+    (sys.GraphicalMeasures || []).forEach(measuresAcrossStaves => {
+      measuresAcrossStaves.forEach((measure, staffIdx) => {
+        if (!measure) return;
+        const mn = measure.parentSourceMeasure?.measureNumber ?? 0;
+        let ni = 0;
+        (measure.staffEntries || []).forEach(se => {
+          (se.graphicalVoiceEntries || []).forEach(gve => {
+            (gve.notes || []).forEach(gn => {
+              const pos = gn.PositionAndShape?.AbsolutePosition;
+              if (!pos) { ni++; return; }
+              allNotes.push({
+                absX:       pos.x,
+                absY:       pos.y,
+                partIdx:    staffIdx,
+                measureNum: mn,
+                noteIdx:    ni,
+                sysIdx:     sysIdx,
+                staffIdx:   staffIdx,
+                isRest:     !!gn.sourceNote?.isRest,
+              });
+              ni++;
             });
-            ni++;
           });
         });
       });
@@ -152,58 +258,67 @@ function buildNoteRegistry() {
   });
 }
 
-function generateConfidence() {
-  // Keep existing scores if count matches (so edits don't reshuffle colours)
-  if (confidence.length !== allNotes.length) {
-    confidence = allNotes.map(() => Math.floor(Math.random() * 101));
-  }
+// ══════════════════════════════════════════════════════
+//  DOT OVERLAY  (on original image, via staff-anchor affine)
+// ══════════════════════════════════════════════════════
+
+/* Project one OSMD-unit (x,y) onto the uploaded image's natural pixels.
+   Per-system horizontal scale + per-staff vertical scale derived from the
+   matched staff-line bounding boxes. */
+function projectOsmdToImage(note) {
+  const osmdSys = osmdSystems[note.sysIdx];
+  const imgSys  = imgSystems[note.sysIdx];
+  if (!osmdSys || !imgSys) return null;
+
+  const osmdSt = osmdSys.staves[note.staffIdx];
+  const imgSt  = imgSys.staves[note.staffIdx];
+  if (!osmdSt || !imgSt) return null;
+
+  // System-wide horizontal extent
+  const oL = Math.min(...osmdSys.staves.map(s => s.leftX));
+  const oR = Math.max(...osmdSys.staves.map(s => s.rightX));
+  const iL = Math.min(...imgSys.staves.map(s => s.left_x));
+  const iR = Math.max(...imgSys.staves.map(s => s.right_x));
+  if (oR - oL < 1e-3) return null;
+
+  const xRatio = (note.absX - oL) / (oR - oL);
+  const imgX   = iL + xRatio * (iR - iL);
+
+  // Per-staff vertical extent (handles page skew between staves)
+  const oH = osmdSt.botY - osmdSt.topY;
+  const iH = imgSt.bot_y - imgSt.top_y;
+  if (oH < 1e-3) return null;
+  const yRatio = (note.absY - osmdSt.topY) / oH;
+  const imgY   = imgSt.top_y + yRatio * iH;
+
+  return { x: imgX, y: imgY };
 }
 
-// ══════════════════════════════════════════════════════
-//  DOT OVERLAY  (on original image)
-// ══════════════════════════════════════════════════════
 function placeDots() {
   const img   = document.getElementById('score-img');
   const layer = document.getElementById('dot-layer');
   layer.innerHTML = '';
 
-  // Wait until image is loaded and notes are ready
-  if (!img.complete || !img.naturalWidth || allNotes.length === 0) return;
+  if (!img.complete || !img.naturalWidth) return;
+  if (allNotes.length === 0 || imgSystems.length === 0) return;
 
-  // img-container CSS (position:relative, display:inline-block) sizes itself
-  // to the image, and dot-layer is absolute top:0 left:0 width:100% height:100%.
-  // So we just need to map OSMD page coords → image display pixels.
-  const dispW = img.offsetWidth;
-  const dispH = img.offsetHeight;
-
-  // OSMD AbsolutePosition is in units; 1 unit = 10 px at zoom=1.
-  // The original MusicXML page is XML_PAGE_W × XML_PAGE_H tenths,
-  // which equals XML_PAGE_W × XML_PAGE_H px at zoom=1 (since 1 tenths = 1 unit/10 = 1px).
-  const sx = dispW / XML_PAGE_W;
-  const sy = dispH / XML_PAGE_H;
+  // Scale from image's natural px (what the backend returned) to the rendered size.
+  const dispW  = img.offsetWidth;
+  const dispH  = img.offsetHeight;
+  const scaleX = dispW / img.naturalWidth;
+  const scaleY = dispH / img.naturalHeight;
 
   allNotes.forEach((n, idx) => {
-    const x = n.absX * 10 * sx;
-    const y = n.absY * 10 * sy;
+    const p = projectOsmdToImage(n);
+    if (!p) return;
 
     const dot = document.createElement('div');
-    dot.className = 'ndot ' + dotClass(idx);
-    dot.style.left = x + 'px';
-    dot.style.top  = y + 'px';
+    dot.className   = 'ndot above';     // single color — projected, no confidence
+    dot.style.left  = (p.x * scaleX) + 'px';
+    dot.style.top   = (p.y * scaleY) + 'px';
     dot.dataset.idx = idx;
     dot.addEventListener('click', () => onDotClick(dot, idx));
     layer.appendChild(dot);
-  });
-}
-
-function dotClass(idx) {
-  return confidence[idx] >= threshold ? 'above' : 'below';
-}
-
-function refreshDotColours() {
-  document.querySelectorAll('.ndot').forEach(d => {
-    const idx = parseInt(d.dataset.idx, 10);
-    d.className = 'ndot ' + dotClass(idx) + (d.classList.contains('selected') ? ' selected' : '');
   });
 }
 
@@ -221,7 +336,6 @@ function onDotClick(dot, idx) {
 function openEditor(idx) {
   const n     = allNotes[idx];
   const xmlN  = getXMLNote(n.partIdx, n.measureNum, n.noteIdx);
-  const conf  = confidence[idx];
   const edEl  = document.getElementById('note-editor');
   const fields = document.getElementById('editor-fields');
 
@@ -239,14 +353,9 @@ function openEditor(idx) {
   document.getElementById('editor-title').textContent =
     `Editing: ${isRest ? 'Rest' : step + octave} (${type})  ·  Part ${n.partIdx + 1}  ·  Measure ${n.measureNum}`;
 
-  const confColor = conf >= threshold ? '#3399ff' : '#ff4444';
-
   fields.innerHTML = `
     <div class="ef-meta">
       Part ${n.partIdx + 1}<br>Measure ${n.measureNum}
-    </div>
-    <div class="ef-conf" style="color:${confColor}" title="Confidence score">
-      ${conf}%
     </div>
 
     ${!isRest ? `
@@ -384,14 +493,6 @@ function applyEdit() {
 //  CONTROLS
 // ══════════════════════════════════════════════════════
 
-// Threshold slider
-const slider = document.getElementById('threshold-slider');
-slider.addEventListener('input', () => {
-  threshold = parseInt(slider.value, 10);
-  document.getElementById('threshold-val').textContent = threshold;
-  refreshDotColours();
-});
-
 // Zoom
 document.getElementById('zoom-in').addEventListener('click', () => {
   currentZoom = Math.min(currentZoom + 0.15, 3.0);
@@ -410,6 +511,11 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   currentXML = originalXML;
   parseXMLModel();
   renderScore(currentXML).then(() => toast('Score reset'));
+});
+
+// Load a different image → go back to upload screen
+document.getElementById('new-image-btn').addEventListener('click', () => {
+  showUploadScreen();
 });
 
 // Download — also auto-saves to /exports/ via backend

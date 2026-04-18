@@ -3,6 +3,7 @@ import os
 import uuid
 import io
 from datetime import datetime
+from staff_detection import detect_staves
 
 app = Flask(__name__)
 
@@ -35,7 +36,23 @@ def upload_image():
     ext = os.path.splitext(f.filename)[1].lower() or '.jpg'
     filename = f'score_{uuid.uuid4().hex[:10]}{ext}'
     f.save(os.path.join(UPLOADS_DIR, filename))
-    return jsonify({'url': f'/static/uploads/{filename}'})
+    return jsonify({'url': f'/static/uploads/{filename}', 'filename': filename})
+
+
+@app.route('/api/detect_staves', methods=['POST'])
+def detect_staves_endpoint():
+    data = request.get_json(silent=True) or {}
+    filename = data.get('filename', '')
+    # Defensive: only allow a bare filename under UPLOADS_DIR.
+    if not filename or '/' in filename or '\\' in filename or '..' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+    path = os.path.join(UPLOADS_DIR, filename)
+    if not os.path.isfile(path):
+        return jsonify({'error': 'File not found'}), 404
+    result = detect_staves(path)
+    if result is None:
+        return jsonify({'error': 'Could not read image'}), 500
+    return jsonify(result)
 
 
 @app.route('/api/download', methods=['POST'])

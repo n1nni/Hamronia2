@@ -101,42 +101,27 @@ header {
   white-space: nowrap;
 }
 
-/* Threshold takes up most of the center */
-.threshold-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 280px;
-}
-.threshold-group label {
-  font-size: 13px;
-  color: #7799bb;
-  white-space: nowrap;
-  font-weight: 500;
-}
+/* Threshold controls (inside control panel) */
 #threshold-slider {
   flex: 1;
-  max-width: 220px;
   height: 6px;
   accent-color: #e94560;
   cursor: pointer;
 }
 #threshold-val {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 800;
   color: #e0eeff;
-  min-width: 38px;
+  min-width: 30px;
+  text-align: right;
 }
 .threshold-legend {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   color: #5577aa;
-  white-space: nowrap;
-  border-left: 1px solid #1a3050;
-  padding-left: 14px;
+  flex-wrap: wrap;
 }
 .dot-blue, .dot-red {
   display: inline-block;
@@ -182,11 +167,52 @@ header {
   text-align: center;
 }
 
-/* ─── Two-panel layout ─── */
-.panels {
+/* ─── Body split: control panel (left) + stacked image/score (right) ─── */
+.body-split {
   flex: 1;
   display: flex;
   overflow: hidden;
+}
+
+.control-panel {
+  width: 280px;
+  flex-shrink: 0;
+  background: #0e1828;
+  border-right: 1px solid #1a3050;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.cp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cp-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #4a6a8a;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #1a3050;
+}
+.cp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cp-row .hbtn { flex: 1; }
+
+.right-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .panel {
@@ -194,10 +220,11 @@ header {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid #1a3050;
+  border-bottom: 1px solid #1a3050;
   min-width: 0;
+  min-height: 0;
 }
-.panel:last-child { border-right: none; }
+.panel:last-child { border-bottom: none; }
 
 .panel-title {
   background: #131f33;
@@ -286,26 +313,24 @@ header {
 .score-scroll {
   flex: 1;
   overflow: auto;
-  background: #dcdbd6;
+  background: #eeede8;   /* matches OSMD pageBackgroundColor — no gray gap below */
 }
 
 #osmd-container {
-  /* size to content — no forced min-height */
+  background: #eeede8;
 }
-#osmd-container svg { display: block; }
+#osmd-container svg { display: block; background: #eeede8; }
 
-/* ─── Note editor (bottom drawer) ─── */
+/* ─── Note editor (inline in control panel) ─── */
 .note-editor {
-  background: #0e1828;
+  background: #0a1624;
+  border: 1px solid #1a3050;
   border-top: 2px solid #e94560;
-  padding: 14px 22px 16px;
-  flex-shrink: 0;
-  z-index: 30;
+  border-radius: 6px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 45vh;
-  overflow-y: auto;
 }
 
 .editor-header {
@@ -314,7 +339,7 @@ header {
   justify-content: space-between;
 }
 #editor-title {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   color: #e94560;
   letter-spacing: 0.3px;
@@ -323,19 +348,18 @@ header {
   background: none;
   border: none;
   color: #4a6080;
-  font-size: 18px;
+  font-size: 16px;
   cursor: pointer;
   line-height: 1;
   padding: 2px 6px;
 }
 #editor-close:hover { color: #e94560; }
 
-/* Fields row */
+/* Fields stack vertically inside the narrow control panel */
 #editor-fields {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px 22px;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .ef-group {
@@ -344,7 +368,7 @@ header {
   gap: 4px;
 }
 .ef-group label {
-  font-size: 11px;
+  font-size: 10px;
   color: #4a6a8a;
   text-transform: uppercase;
   letter-spacing: 0.7px;
@@ -356,42 +380,32 @@ header {
   border: 1px solid #1e3a5a;
   color: #cce;
   border-radius: 5px;
-  padding: 7px 10px;
-  font-size: 14px;
+  padding: 6px 8px;
+  font-size: 13px;
   outline: none;
-  min-width: 100px;
+  width: 100%;
 }
 .ef-group select:focus,
 .ef-group input:focus { border-color: #e94560; }
 
 .ef-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: #3a5570;
-  line-height: 1.8;
-  align-self: flex-end;
+  line-height: 1.6;
   padding-bottom: 2px;
-}
-
-.ef-conf {
-  font-size: 28px;
-  font-weight: 800;
-  align-self: flex-end;
-  padding-bottom: 0;
-  line-height: 1;
 }
 
 .editor-actions {
   display: flex;
-  gap: 8px;
-  align-self: flex-end;
-  margin-left: auto;
-  padding-bottom: 2px;
+  gap: 6px;
+  margin-top: 4px;
 }
 .editor-actions button {
-  padding: 9px 26px;
+  flex: 1;
+  padding: 8px 0;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 5px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   transition: background 0.15s;
@@ -423,8 +437,8 @@ header {
 .score-scroll::-webkit-scrollbar,
 .image-wrap::-webkit-scrollbar,
 .note-editor::-webkit-scrollbar { width: 5px; height: 5px; }
-.score-scroll::-webkit-scrollbar-track { background: #ccc; }
-.score-scroll::-webkit-scrollbar-thumb { background: #999; border-radius: 3px; }
+.score-scroll::-webkit-scrollbar-track { background: #eeede8; }
+.score-scroll::-webkit-scrollbar-thumb { background: #b8b5a8; border-radius: 3px; }
 .image-wrap::-webkit-scrollbar-track   { background: #0c1520; }
 .image-wrap::-webkit-scrollbar-thumb   { background: #1a3050; border-radius: 3px; }
 .note-editor::-webkit-scrollbar-track  { background: #0e1828; }
